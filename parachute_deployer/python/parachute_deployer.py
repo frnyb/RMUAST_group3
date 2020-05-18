@@ -2,184 +2,98 @@
 
 import rospy
 from geometry_msgs.msg import PoseStamped
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, Imu
 from nav_msgs.msg import Odometry
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
-from math import sqrt
+from math import sqrt, pi
 import transforms3d
+from mavros_msgs.srv import SetMode
+import os
 
 class ParachuteDeployer():
     def __init__(
             self,
             node_name="parachute_deployer",
-            image_topic="/iris_fpv_cam/usb_cam/image_raw",
-            image_detected_topic="/aruco_image",
-            pose_topic="/pose",
-            camera_matrix=np.array([
-                [277.191356, 0.0, 160],
-                [0.0, 277.191356, 120],
-                [0.0, 0.0, 1.0]]),
-            distortion_matrix=np.array([[0, 0, 0, 0, 0]], dtype='f'),
-            aruco_length=2
+            imu_topic="/mavros/imu/data_raw"
     ):
         rospy.init_node(node_name)
 
-        self.setpoint = PoseStamped()
-        self.setpoint.pose.position.x = 0
-        self.setpoint.pose.position.y = 0
-        self.setpoint.pose.position.z = 20
-
-        self.pos_thresh = 0.1
-
-        self.dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_250)
-        self.camera_matrix = camera_matrix
-        self.distortion_matrix = distortion_matrix
-        self.aruco_length = aruco_length
-
-        self.odom_pose = None
-
         rospy.sleep(0.05)
 
-        self.state = "init"
+        self.pitch_fails = []
+        self.roll_fails = []
+        self.alt_fails = []
+        self.fail_interval = 50
+        self.fail_state = "ok"
 
-        self.bridge = CvBridge()
-
-        self.image_sub = rospy.Subscriber(
-                image_topic,
-                Image,
-                callback=self.on_new_image,
+        self.imu_sub = rospy.Subscriber(
+                imu_topic,
+                Imu,
+                callback=self.on_new_imu_data,
                 queue_size=1
-        )
-
-        self.pose_pub = rospy.Publisher(
-                pose_topic,
-                PoseStamped,
-                queue_size=1
-        )
-
-        self.image_detected_pub = rospy.Publisher(
-                image_detected_topic,
-                Image,
-                queue_size=1
-        )
-
-        self.state_sub = rospy.Subscriber(
-                "/mavros/local_position/odom",
-                Odometry,
-                callback=self.update_odom
         )
 
         rospy.spin()
 
-    def update_odom(
+    def on_new_imu_data(
             self,
             msg
     ):
-        self.odom_pose = msg.pose
+        if self.fail_state == "ok":
+            pitch_vel = msg.angular_velocity.x
+            roll_vel = msg.angular_velocity.y
+            alt_acc = msg.linear_acceleration.z
 
-    def on_new_image(
-            self,
-            msg
-    ):
-        img = self.bridge.imgmsg_to_cv2(
-                msg,
-                "bgr8"
-        )
+            if abs(pitch_vel) > pi:
+                self.pitch_fails.append(True)
+                rospy.loginfo("pitch fail")
+            else:
+                self.pitch_fails.append(False)
+            if abs(roll_vel) > pi:
+                self.roll_fails.append(True)
+                rospy.loginfo("roll fail")
+            else:
+                self.roll_fails.append(False)
+            if alt_acc < 0.5:
+                self.alt_fails.append(True)
+                rospy.loginfo("alt fail")
+            else:
+                self.alt_fails.append(False)
 
-        if self.state == "init":
-            self.pose_pub.publish(self.setpoint)
+            if len(self.pitch_fails) > self.fail_interval:
+                self.pitch_fails = self.pitch_fails[-self.fail_interval:]
+            if len(self.roll_fails) > self.fail_interval:
+                self.roll_fails = self.roll_fails[-self.fail_interval:]
+            if len(self.alt_fails) > self.fail_interval:
+                self.alt_fails = self.alt_fails[-self.fail_interval:]
 
-            if self.odom_pose != None and self.odom_pose.pose.position.z > 0.5:
-                self.state = "ascending"
+            if (
+                    np.asarray(self.pitch_fails).any() == True and
+                    np.asarray(self.roll_fails).any() == True
+            ):
+                rospy.loginfo("Attitude fail")
+                self.fail_state = "fail"
+                self.set_mode_lockdown()
 
-        elif self.state == "ascending" and self.odom_pose != None:
-            euc_dist = sqrt((self.odom_pose.pose.position.x - self.setpoint.pose.position.x)**2 + (self.odom_pose.pose.position.y - self.setpoint.pose.position.y)**2 + (self.odom_pose.pose.position.z - self.setpoint.pose.position.z)**2)
-            if euc_dist <= self.pos_thresh:
-                self.state = "aruco"
-        
-        elif self.state == "aruco":
-            if self.detect_aruco(img):
-                self.setpoint.pose.position.x = self.odom_pose.pose.position.x - (self.aruco_pose[0, 3])
-                self.setpoint.pose.position.y = self.odom_pose.pose.position.y - (self.aruco_pose[1, 3])
+            if(np.asarray(self.alt_fails).any() == True):
+                rospy.loginfo("Altitude fail")
+                self.fail_state = "fail"
+                self.set_mode_lockdown()
 
-                self.pose_pub.publish(self.setpoint)
+    def set_mode_lockdown(self):
+        os.system('rosservice call /mavros/cmd/command "{broadcast: false, command: 185,confirmation: 0, param1: 1.0, param2: 0.0, param3: 0.0, param4: 0.0,param5: 0.0, param6: 0.0, param7: 0.0}"')
+        #rospy.wait_for_service('mavros/set_mode')
 
-                self.state = "aligning"
-
-        elif self.state == "aligning":
-            euc_dist = sqrt((self.odom_pose.pose.position.x - self.setpoint.pose.position.x)**2 + (self.odom_pose.pose.position.y - self.setpoint.pose.position.y)**2 + (self.odom_pose.pose.position.z - self.setpoint.pose.position.z)**2)
-
-            if euc_dist <= self.pos_thresh:
-                self.state = "turnoff_motors"
-
-        elif self.state == "turnoff_motors":
-            rospy.loginfo("Turning off motors")
-            self.state = "fuck"
-
-            
-    def detect_aruco(
-            self,
-            img
-    ):
-        corners, ids, rejected_pts = cv2.aruco.detectMarkers(
-                img,
-                self.dictionary
-        )
-
-        if ids != None:
-            rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(
-                    corners,
-                    self.aruco_length,
-                    self.camera_matrix,
-                    self.distortion_matrix
-            )
-
-            for i in range(rvecs.shape[0]):
-                rvec = rvecs[i, :] 
-                tvec = tvecs[i, :] 
-
-            R, _ = cv2.Rodrigues(rvec)
-
-            self.aruco_pose = transforms3d.affines.compose(
-                    tvec[0],
-                    R,
-                    np.ones(3),
-                    np.zeros(3)
-            )
-
-            img_drawn = cv2.aruco.drawDetectedMarkers(
-                    img,
-                    corners
-            )
-
-            img_drawn = cv2.aruco.drawAxis(
-                    img_drawn, 
-                    self.camera_matrix, 
-                    self.distortion_matrix, 
-                    rvec, 
-                    tvec, 
-                    self.aruco_length
-            ) 
-
-            ros_img = self.bridge.cv2_to_imgmsg(
-                    img_drawn,
-                    "bgr8"
-            )
-
-            self.image_detected_pub.publish(ros_img)
-
-            return True
-        else:
-            ros_img = self.bridge.cv2_to_imgmsg(
-                    img,
-                    "bgr8"
-            )
-
-            self.image_detected_pub.publish(ros_img)
-
-            return False
+        #try:
+        #    flight_mode_service = rospy.ServiceProxy(
+        #            'mavros/set_mode',
+        #            SetMode
+        #    )
+        #    flight_mode_service(custom_mode='Lockdown')
+        #except rospy.ServiceException, e:
+        #    print(e)
 
 if __name__ == '__main__':
     ParachuteDeployer()

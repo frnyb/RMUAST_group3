@@ -110,24 +110,24 @@ class ArucoLander():
 
         elif self.state == "aligning":
             euc_dist = sqrt((self.odom_pose.pose.position.x - self.setpoint.pose.position.x)**2 + (self.odom_pose.pose.position.y - self.setpoint.pose.position.y)**2 + (self.odom_pose.pose.position.z - self.setpoint.pose.position.z)**2)
-            rospy.loginfo(euc_dist)
 
             if euc_dist <= self.pos_thresh:
                 self.setpoint.pose.position.z = 0
                 self.pose_pub.publish(self.setpoint)
-                self.state = "descending"
+                self.state = "fuck"
+                rospy.loginfo("aligned")
 
         elif self.state == "descending":
             if self.detect_aruco(img):
                 self.setpoint.pose.position.x = self.odom_pose.pose.position.x - self.aruco_pose[0, 3]
                 self.setpoint.pose.position.y = self.odom_pose.pose.position.y - self.aruco_pose[1, 3]
-                rospy.loginfo("Descending and found aruco")
+                #rospy.loginfo("Descending and found aruco")
 
             if self.odom_pose.pose.position.x <= 0.1:
                 self.state = "landed"
 
         elif self.state == "landed":
-            rospy.loginfo("landed")
+            #rospy.loginfo("landed")
             self.state = "finish"
             
     def detect_aruco(

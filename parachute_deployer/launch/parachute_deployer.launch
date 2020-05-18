@@ -11,5 +11,7 @@
 
     <node name="offboard_controller" pkg="offboard_control" type="offboard_control.py" output="screen"/>
 
+    <node name="aruco_landing" pkg="aruco_landing" type="aruco_landing.py" output="screen"/>
+
     <node name="parachute_deployer" pkg="parachute_deployer" type="parachute_deployer.py" output="screen"/>
 </launch>
