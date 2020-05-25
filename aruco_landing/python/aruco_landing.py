@@ -112,9 +112,9 @@ class ArucoLander():
             euc_dist = sqrt((self.odom_pose.pose.position.x - self.setpoint.pose.position.x)**2 + (self.odom_pose.pose.position.y - self.setpoint.pose.position.y)**2 + (self.odom_pose.pose.position.z - self.setpoint.pose.position.z)**2)
 
             if euc_dist <= self.pos_thresh:
-                self.setpoint.pose.position.z = 0
-                self.pose_pub.publish(self.setpoint)
-                self.state = "fuck"
+                #self.setpoint.pose.position.z = 0
+                #self.pose_pub.publish(self.setpoint)
+                self.state = "stop"
                 rospy.loginfo("aligned")
 
         elif self.state == "descending":
