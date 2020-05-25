@@ -4,3 +4,5 @@ Code for final report in course RMUAST. The folders are structured as follows:
 - *offboard_control*: This folder contains a ROS package for offboard control of a MAVLINK UAV using MAVROS.
 - *aruco_landing*: This folder contains a ROS package for landing on an ArUco marker in the PX4 SITL environment.
 - *parachute_deplyer*: This folder contains a ROS package for deploying parachute and testing failsafe systems in the PX4 SITL environment.
+
+The world should be located in /home/$USER/.gazebo/worlds/
